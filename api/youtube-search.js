@@ -1,9 +1,65 @@
+const PIPED = [
+  "https://pipedapi.kavin.rocks",
+  "https://pipedapi.in.projectsegfau.lt",
+  "https://api.piped.private.coffee",
+  "https://pipedapi.adminforge.de",
+];
+
 const INVIDIOUS = [
   "https://yewtu.be",
   "https://invidious.fdn.fr",
   "https://vid.puffyan.us",
   "https://inv.nadeko.net",
+  "https://invidious.privacyredirect.com",
 ];
+
+function parseVideoId(urlOrId) {
+  if (!urlOrId) return null;
+  if (/^[a-zA-Z0-9_-]{11}$/.test(urlOrId)) return urlOrId;
+  const m = String(urlOrId).match(/(?:v=|youtu\.be\/|\/vi\/|embed\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+function mapItems(list) {
+  return list
+    .filter((x) => x.videoId)
+    .slice(0, 12)
+    .map((x) => ({
+      videoId: x.videoId,
+      title: x.title || "Video",
+      thumb: x.thumb || `https://i.ytimg.com/vi/${x.videoId}/mqdefault.jpg`,
+      channel: x.channel || "",
+    }));
+}
+
+async function searchPiped(q) {
+  let lastErr;
+  for (const base of PIPED) {
+    try {
+      const url = `${base}/search?q=${encodeURIComponent(q)}&filter=videos`;
+      const r = await fetch(url, {
+        headers: { Accept: "application/json", "User-Agent": "amina-search/1.0" },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const raw = data.items || data.results || [];
+      const items = raw
+        .map((x) => ({
+          videoId: parseVideoId(x.url || x.videoId || x.id),
+          title: x.title,
+          thumb: x.thumbnail || x.thumbnailUrl,
+          channel: x.uploaderName || x.author || "",
+        }))
+        .filter((x) => x.videoId);
+      if (!items.length) throw new Error("empty");
+      return mapItems(items);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("piped failed");
+}
 
 async function searchInvidious(q) {
   let lastErr;
@@ -12,31 +68,31 @@ async function searchInvidious(q) {
       const url = `${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video`;
       const r = await fetch(url, {
         headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(15000),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       if (!Array.isArray(data)) throw new Error("bad response");
-      return data
+      const items = data
         .filter((x) => x.type === "video" && x.videoId)
-        .slice(0, 12)
         .map((x) => ({
           videoId: x.videoId,
           title: x.title || "Video",
           thumb:
-            (x.videoThumbnails && x.videoThumbnails.find((t) => t.quality === "medium")?.url) ||
-            (x.videoThumbnails && x.videoThumbnails[0]?.url) ||
-            `https://i.ytimg.com/vi/${x.videoId}/mqdefault.jpg`,
+            x.videoThumbnails?.find((t) => t.quality === "medium")?.url ||
+            x.videoThumbnails?.[0]?.url,
           channel: x.author || "",
         }));
+      if (!items.length) throw new Error("empty");
+      return mapItems(items);
     } catch (e) {
       lastErr = e;
     }
   }
-  throw lastErr || new Error("all invidious instances failed");
+  throw lastErr || new Error("invidious failed");
 }
 
-async function searchYouTubeApi(q, geo) {
+async function searchYouTubeApi(q) {
   const key = process.env.YOUTUBE_API_KEY;
   if (!key) return null;
 
@@ -47,11 +103,9 @@ async function searchYouTubeApi(q, geo) {
     maxResults: "12",
     key,
     safeSearch: "none",
+    regionCode: "US",
+    relevanceLanguage: "en",
   });
-  if (geo === "us") {
-    params.set("regionCode", "US");
-    params.set("relevanceLanguage", "en");
-  }
 
   const r = await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`);
   if (!r.ok) {
@@ -59,14 +113,15 @@ async function searchYouTubeApi(q, geo) {
     throw new Error(err.slice(0, 120));
   }
   const data = await r.json();
-  return (data.items || [])
-    .filter((i) => i.id && i.id.videoId)
+  const items = (data.items || [])
+    .filter((i) => i.id?.videoId)
     .map((i) => ({
       videoId: i.id.videoId,
       title: i.snippet.title,
-      thumb: i.snippet.thumbnails?.medium?.url || `https://i.ytimg.com/vi/${i.id.videoId}/mqdefault.jpg`,
+      thumb: i.snippet.thumbnails?.medium?.url,
       channel: i.snippet.channelTitle || "",
     }));
+  return items.length ? mapItems(items) : null;
 }
 
 export default async function handler(req, res) {
@@ -85,21 +140,38 @@ export default async function handler(req, res) {
     return;
   }
 
-  const geo = req.query.geo === "us" ? "us" : "";
+  const errors = [];
 
   try {
-    let items = null;
-    try {
-      items = await searchYouTubeApi(q, geo);
-    } catch (e) {
-      console.warn("YouTube API:", e.message);
+    const items = await searchYouTubeApi(q);
+    if (items?.length) {
+      res.status(200).json({ items, source: "youtube-api" });
+      return;
     }
-    if (!items || !items.length) {
-      items = await searchInvidious(q);
-    }
-    res.status(200).json({ items, source: items.length ? "ok" : "empty" });
-  } catch (err) {
-    console.error("youtube-search:", err);
-    res.status(502).json({ error: "search failed", message: String(err.message || err) });
+  } catch (e) {
+    errors.push("api:" + e.message);
   }
+
+  try {
+    const items = await searchPiped(q);
+    res.status(200).json({ items, source: "piped" });
+    return;
+  } catch (e) {
+    errors.push("piped:" + e.message);
+  }
+
+  try {
+    const items = await searchInvidious(q);
+    res.status(200).json({ items, source: "invidious" });
+    return;
+  } catch (e) {
+    errors.push("inv:" + e.message);
+  }
+
+  console.error("youtube-search failed:", errors.join(" | "));
+  res.status(502).json({
+    error: "search failed",
+    message: "All search backends unavailable. Add YOUTUBE_API_KEY in Vercel settings for reliable search.",
+    detail: errors.join("; "),
+  });
 }
