@@ -6,6 +6,10 @@ function rewriteHtml(html, targetUrl) {
   }
   html = html.replace(/<meta[^>]+http-equiv=["']?X-Frame-Options["']?[^>]*>/gi, "");
   html = html.replace(/<meta[^>]+http-equiv=["']?Content-Security-Policy["']?[^>]*>/gi, "");
+  if (/google\./i.test(targetUrl)) {
+    html = html.replace(/<div[^>]+id=["']?og-teaser["']?[^>]*>[\s\S]*?<\/div>/gi, "");
+    html = html.replace(/data-ved=["'][^"']*["']/gi, "");
+  }
   return html;
 }
 
@@ -43,12 +47,11 @@ export default async function handler(req, res) {
     return;
   }
 
-  const useUsGeo = req.query.geo === "us";
   const headers = {
     "User-Agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": useUsGeo ? "en-US,en;q=0.9" : "en-US,en;q=0.9,ru;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
   };
 
   try {
