@@ -23,7 +23,7 @@ function parseVideoId(urlOrId) {
 function mapItems(list) {
   return list
     .filter((x) => x.videoId)
-    .slice(0, 12)
+    .slice(0, 20)
     .map((x) => ({
       videoId: x.videoId,
       title: x.title || "Video",
@@ -100,7 +100,7 @@ async function searchYouTubeApi(q) {
     part: "snippet",
     q,
     type: "video",
-    maxResults: "12",
+    maxResults: "20",
     key,
     safeSearch: "none",
     regionCode: "US",
