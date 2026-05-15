@@ -720,10 +720,36 @@ input:focus { border-color:var(--acc); box-shadow:0 0 0 3px var(--glow2); }
   cursor:pointer; white-space:nowrap; flex-shrink:0;
 }
 .yt-search-results {
-  display:none; max-height:min(42vh, 320px); overflow-y:auto;
+  display:none; flex-direction:column;
+  max-height:min(42vh, 320px); overflow:hidden;
   border-top:1px solid var(--b1); background:var(--s1);
 }
-.yt-search-results.on { display:block; }
+.yt-search-results.on { display:flex; }
+.yt-search-hdr {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:8px 12px; border-bottom:1px solid var(--b1); flex-shrink:0;
+  background:var(--s1);
+}
+.yt-search-hdr-title { font-size:11px; font-weight:600; letter-spacing:.5px; color:var(--t2); }
+.yt-search-close {
+  width:28px; height:28px; border:1px solid var(--b1); border-radius:8px;
+  background:none; color:var(--t2); cursor:pointer; font-size:14px; line-height:1;
+  display:flex; align-items:center; justify-content:center; transition:all .15s;
+}
+.yt-search-close:hover { background:var(--s2); color:var(--t1); border-color:var(--b2); }
+.yt-search-list { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:0; }
+.yt-search-pager {
+  display:flex; align-items:center; justify-content:center; gap:14px;
+  padding:8px 12px; border-top:1px solid var(--b1); flex-shrink:0; background:var(--s1);
+}
+.yt-pager-btn {
+  width:36px; height:32px; border:1px solid var(--b1); border-radius:8px;
+  background:var(--s2); color:var(--t1); cursor:pointer; font-size:16px;
+  display:flex; align-items:center; justify-content:center; transition:all .15s;
+}
+.yt-pager-btn:hover:not(:disabled) { border-color:var(--acc); box-shadow:0 0 8px var(--glow2); }
+.yt-pager-btn:disabled { opacity:.35; cursor:not-allowed; }
+.yt-pager-info { font-size:11px; color:var(--t2); font-family:'DM Mono',monospace; min-width:52px; text-align:center; }
 .yt-result {
   display:flex; align-items:center; gap:10px; padding:9px 12px;
   border-bottom:1px solid var(--b1); cursor:pointer; transition:background .15s;
@@ -1306,10 +1332,26 @@ textarea.ci:focus { border-color:var(--acc); box-shadow:0 0 0 3px var(--glow2); 
   MOBILE LAYOUT
 ═══════════════════════════════════════════════════ */
 @media (max-width: 768px) {
+  /* Chat keyboard: hide video + link bar only, keep youtube search usable */
   body.keyboard-open .video-wrap { display:none !important; }
-  body.keyboard-open .watch-bar { display:none !important; }
+  body.keyboard-open .urlbar { display:none !important; }
   body.keyboard-open .pinned-bar { display:none !important; }
   body.keyboard-open .chat-hdr { display:none !important; }
+
+  /* Youtube search keyboard: pin search bar, overlay results */
+  body.keyboard-open-yt .video-wrap { display:none !important; }
+  body.keyboard-open-yt .urlbar { display:none !important; }
+  body.keyboard-open-yt .pinned-bar { display:none !important; }
+  body.keyboard-open-yt .chat-wrap { visibility:hidden; pointer-events:none; }
+  body.keyboard-open-yt .watch-bar {
+    position:fixed; left:0; right:0; bottom:0; z-index:600;
+    padding-bottom:env(safe-area-inset-bottom, 0);
+    box-shadow:0 -8px 32px rgba(0,0,0,.55);
+  }
+  body.keyboard-open-yt .yt-search-results.on {
+    position:fixed; left:0; right:0; top:46px; bottom:auto;
+    max-height:calc(100vh - 46px - 120px); z-index:599;
+  }
 
   .content { display:flex; flex-direction:column; height:100%; }
   .chat-wrap { flex:1; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
@@ -1320,6 +1362,12 @@ textarea.ci:focus { border-color:var(--acc); box-shadow:0 0 0 3px var(--glow2); 
   .amenu-grid { grid-template-columns:repeat(3,1fr); }
 
   .watch-bar { position:sticky; bottom:0; z-index:10; }
+  #yt-search-input, #yturl { font-size:16px !important; }
+  .yt-search-results.on {
+    position:fixed; left:0; right:0; top:46px; bottom:0;
+    max-height:none; z-index:450;
+  }
+  .yt-search-btn { padding:8px 14px; font-size:12px; }
   #auth { align-items:flex-start; padding-top:env(safe-area-inset-top, 24px); }
   .auth-card { max-height:90vh; overflow-y:auto; padding-bottom:40px; }
 }
@@ -1854,9 +1902,10 @@ function applyGoogleGeoParams(p) {
 
 function googleSearchTarget(queryOrParams) {
   const p = typeof queryOrParams === 'string'
-    ? applyGoogleGeoParams(new URLSearchParams({ q: queryOrParams, igu: '1' }))
+    ? applyGoogleGeoParams(new URLSearchParams({ q: queryOrParams, igu: '1', gbv: '1' }))
     : applyGoogleGeoParams(queryOrParams);
   if (!p.has('igu')) p.set('igu', '1');
+  if (!p.has('gbv')) p.set('gbv', '1');
   return 'https://www.google.com/search?' + p.toString();
 }
 
@@ -1869,7 +1918,11 @@ function normalizeGoogleUrl(url) {
   try {
     const u = new URL(url);
     if (!/google\./i.test(u.hostname)) return url;
+    if (u.pathname === '/' || u.pathname === '/webhp' || u.pathname === '/m') {
+      return buildGoogleSearchUrl(' ');
+    }
     u.searchParams.set('igu', '1');
+    u.searchParams.set('gbv', '1');
     applyGoogleGeoParams(u.searchParams);
     const target = u.toString();
     return BROWSE_PROXY ? browseProxyUrl(target) : target;
@@ -2737,7 +2790,7 @@ document.addEventListener('click', e=>{
 });
 
 document.addEventListener('keydown', e=>{
-  if(e.key==='Escape'){ closeUPM(); closeModal('share-modal'); closeModal('online-modal'); closeCtx(); }
+  if(e.key==='Escape'){ closeYtSearch(); closeUPM(); closeModal('share-modal'); closeModal('online-modal'); closeCtx(); }
   const typing=e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA';
   if(typing)return;
   if(e.key===' '){e.preventDefault();if(currentUser)syncPause();}
@@ -2745,7 +2798,19 @@ document.addEventListener('keydown', e=>{
 });
 
 /* ═══ MOBILE KEYBOARD FIX ═══ */
+window.__kbSource = 'chat';
 (function() {
+  const ci = document.getElementById('ci');
+  const ytInp = document.getElementById('yt-search-input');
+  const dmInp = document.getElementById('dm-input');
+  if (ci) ci.addEventListener('focus', () => { window.__kbSource = 'chat'; });
+  if (dmInp) dmInp.addEventListener('focus', () => { window.__kbSource = 'chat'; });
+  if (ytInp) ytInp.addEventListener('focus', () => { window.__kbSource = 'yt'; });
+  document.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (t && t.id === 'yt-search-input') window.__kbSource = 'yt';
+    else if (t && (t.id === 'ci' || t.id === 'dm-input')) window.__kbSource = 'chat';
+  });
   if (!window.visualViewport) return;
   const THRESHOLD = 150;
   const fullH = window.visualViewport.height;
@@ -2753,21 +2818,40 @@ document.addEventListener('keydown', e=>{
     const h = window.visualViewport.height;
     const offsetTop = window.visualViewport.offsetTop || 0;
     const keyboardOpen = (fullH - h) > THRESHOLD;
-    document.body.classList.toggle('keyboard-open', keyboardOpen);
+    const isYt = window.__kbSource === 'yt';
+    document.body.classList.toggle('keyboard-open', keyboardOpen && !isYt);
+    document.body.classList.toggle('keyboard-open-yt', keyboardOpen && isYt);
     const main = document.getElementById('main');
-    if (main) { main.style.height=h+'px'; main.style.transform=offsetTop?'translateY('+offsetTop+'px)':''; }
+    if (main) {
+      main.style.height = h + 'px';
+      main.style.transform = offsetTop ? 'translateY(' + offsetTop + 'px)' : '';
+    }
     const inputWrap = document.getElementById('chat-input-wrap');
-    if (inputWrap) {
-      inputWrap.style.position='sticky'; inputWrap.style.bottom='0';
+    if (inputWrap && !isYt) {
+      inputWrap.style.position = 'sticky';
+      inputWrap.style.bottom = '0';
       inputWrap.style.paddingBottom = keyboardOpen ? 'env(safe-area-inset-bottom, 8px)' : '';
     }
-    if (keyboardOpen) setTimeout(()=>{ const msgs=document.getElementById('msgs'); if(msgs)msgs.scrollTop=msgs.scrollHeight; }, 80);
+    if (keyboardOpen && !isYt) {
+      setTimeout(() => { const msgs = document.getElementById('msgs'); if (msgs) msgs.scrollTop = msgs.scrollHeight; }, 80);
+    }
   });
 })();
 
 /* ═══════════════════════════════════════════════════
   YOUTUBE SEARCH
 ═══════════════════════════════════════════════════ */
+let _ytSearchItems = [];
+let _ytSearchPage = 0;
+const YT_SEARCH_PAGE_SIZE = 5;
+
+function closeYtSearch() {
+  const box = document.getElementById('yt-search-results');
+  if (box) { box.classList.remove('on'); box.innerHTML = ''; }
+  _ytSearchItems = [];
+  _ytSearchPage = 0;
+}
+
 async function ytSearch() {
   const inp = document.getElementById('yt-search-input');
   const box = document.getElementById('yt-search-results');
@@ -2781,7 +2865,7 @@ async function ytSearch() {
   }
 
   box.classList.add('on');
-  box.innerHTML = '<div class="empty-state" style="padding:14px">searching…</div>';
+  box.innerHTML = '<div class="yt-search-hdr"><span class="yt-search-hdr-title">searching…</span><button type="button" class="yt-search-close" onclick="closeYtSearch()">✕</button></div><div class="empty-state" style="padding:14px">please wait</div>';
 
   try {
     const r = await fetch(YT_SEARCH_API + '?q=' + encodeURIComponent(q) + '&geo=us');
@@ -2789,20 +2873,47 @@ async function ytSearch() {
     if (!r.ok) throw new Error(data.message || data.error || 'search failed');
     renderYtSearchResults(data.items || []);
   } catch (e) {
-    box.innerHTML = '<div class="empty-state" style="padding:14px">search failed — try again</div>';
+    box.innerHTML = '<div class="yt-search-hdr"><span class="yt-search-hdr-title">error</span><button type="button" class="yt-search-close" onclick="closeYtSearch()">✕</button></div><div class="empty-state" style="padding:14px">search failed — try again</div>';
     toast(String(e.message || e).slice(0, 60));
   }
 }
 
 function renderYtSearchResults(items) {
+  _ytSearchItems = items || [];
+  _ytSearchPage = 0;
   const box = document.getElementById('yt-search-results');
   if (!box) return;
-  if (!items.length) {
-    box.innerHTML = '<div class="empty-state" style="padding:14px">no videos found</div>';
+  if (!_ytSearchItems.length) {
+    box.classList.add('on');
+    box.innerHTML = '<div class="yt-search-hdr"><span class="yt-search-hdr-title">0 results</span><button type="button" class="yt-search-close" onclick="closeYtSearch()">✕</button></div><div class="empty-state" style="padding:14px">no videos found</div>';
     return;
   }
-  box.innerHTML = '';
-  items.forEach(item => {
+  box.classList.add('on');
+  renderYtSearchPage();
+}
+
+function renderYtSearchPage() {
+  const box = document.getElementById('yt-search-results');
+  if (!box || !_ytSearchItems.length) return;
+  const totalPages = Math.max(1, Math.ceil(_ytSearchItems.length / YT_SEARCH_PAGE_SIZE));
+  if (_ytSearchPage >= totalPages) _ytSearchPage = totalPages - 1;
+  if (_ytSearchPage < 0) _ytSearchPage = 0;
+  const slice = _ytSearchItems.slice(_ytSearchPage * YT_SEARCH_PAGE_SIZE, (_ytSearchPage + 1) * YT_SEARCH_PAGE_SIZE);
+
+  box.innerHTML = `
+    <div class="yt-search-hdr">
+      <span class="yt-search-hdr-title">${_ytSearchItems.length} results</span>
+      <button type="button" class="yt-search-close" onclick="closeYtSearch()" aria-label="close">✕</button>
+    </div>
+    <div class="yt-search-list" id="yt-search-list"></div>
+    <div class="yt-search-pager">
+      <button type="button" class="yt-pager-btn" id="yt-search-prev" aria-label="previous">←</button>
+      <span class="yt-pager-info">${_ytSearchPage + 1} / ${totalPages}</span>
+      <button type="button" class="yt-pager-btn" id="yt-search-next" aria-label="next">→</button>
+    </div>`;
+
+  const list = document.getElementById('yt-search-list');
+  slice.forEach(item => {
     const vid = item.videoId;
     if (!vid) return;
     const title = item.title || ('Video ' + vid.slice(0, 6));
@@ -2821,15 +2932,26 @@ function renderYtSearchResults(items) {
     row.querySelector('.yt-result-play').onclick = (e) => {
       e.stopPropagation();
       loadVid(vid);
-      box.classList.remove('on');
+      closeYtSearch();
     };
     row.querySelector('.yt-result-queue').onclick = (e) => {
       e.stopPropagation();
       addToQueue(vid, title);
     };
-    row.onclick = () => { loadVid(vid); box.classList.remove('on'); };
-    box.appendChild(row);
+    row.onclick = () => { loadVid(vid); closeYtSearch(); };
+    list.appendChild(row);
   });
+
+  const prev = document.getElementById('yt-search-prev');
+  const next = document.getElementById('yt-search-next');
+  if (prev) {
+    prev.disabled = _ytSearchPage <= 0;
+    prev.onclick = () => { if (_ytSearchPage > 0) { _ytSearchPage--; renderYtSearchPage(); } };
+  }
+  if (next) {
+    next.disabled = _ytSearchPage >= totalPages - 1;
+    next.onclick = () => { if (_ytSearchPage < totalPages - 1) { _ytSearchPage++; renderYtSearchPage(); } };
+  }
 }
 
 /* ═══════════════════════════════════════════════════
