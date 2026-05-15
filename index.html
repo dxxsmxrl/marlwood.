@@ -1842,19 +1842,27 @@ function isSpecialBrowserUser() {
   return n === SPECIAL_USER.toLowerCase() || n === SPECIAL_USER2.toLowerCase();
 }
 
-function applySpecialGeoParams(p) {
-  if (!isSpecialBrowserUser()) return p;
+function applyGoogleGeoParams(p) {
   p.set('gl', 'us');
   p.set('hl', 'en');
   p.set('pws', '0');
+  p.set('nfpr', '1');
   p.set('cr', 'countryUS');
   p.set('uule', SPECIAL_LOC_UULE);
   return p;
 }
 
-function buildGoogleSearchUrl(query) {
-  const p = applySpecialGeoParams(new URLSearchParams({ q: query, igu: '1' }));
+function googleSearchTarget(queryOrParams) {
+  const p = typeof queryOrParams === 'string'
+    ? applyGoogleGeoParams(new URLSearchParams({ q: queryOrParams, igu: '1' }))
+    : applyGoogleGeoParams(queryOrParams);
+  if (!p.has('igu')) p.set('igu', '1');
   return 'https://www.google.com/search?' + p.toString();
+}
+
+function buildGoogleSearchUrl(query) {
+  const target = googleSearchTarget(query);
+  return BROWSE_PROXY ? browseProxyUrl(target) : target;
 }
 
 function normalizeGoogleUrl(url) {
@@ -1862,8 +1870,9 @@ function normalizeGoogleUrl(url) {
     const u = new URL(url);
     if (!/google\./i.test(u.hostname)) return url;
     u.searchParams.set('igu', '1');
-    applySpecialGeoParams(u.searchParams);
-    return u.toString();
+    applyGoogleGeoParams(u.searchParams);
+    const target = u.toString();
+    return BROWSE_PROXY ? browseProxyUrl(target) : target;
   } catch (_) { return url; }
 }
 
@@ -1875,9 +1884,7 @@ function youtubeEmbedUrl(videoId, start) {
 }
 
 function browseProxyUrl(targetUrl) {
-  let u = BROWSE_PROXY + '?url=' + encodeURIComponent(targetUrl);
-  if (isSpecialBrowserUser()) u += '&geo=us';
-  return u;
+  return BROWSE_PROXY + '?url=' + encodeURIComponent(targetUrl) + '&geo=us';
 }
 
 function _loadBrowserFrame(src, displayUrl) {
@@ -1939,13 +1946,8 @@ function showGreeting(name) {
   if (!el) return;
   const n = name.trim().toLowerCase();
   if (!n) { el.classList.remove('on'); el.textContent=''; return; }
-  const greetings = {
-    'shumi':    'привет, Шуми ✨',
-    'marl':     'добро пожаловать, создатель 👑',
-    'dxxsmxrl': 'hey LA 🌴',
-    'jaden':    'allahu akbar 🤲',
-  };
-  const msg = greetings[n] || `добро пожаловать, ${name} 🌙`;
+  if (n === 'jaden') { el.textContent = 'allahu akbar'; el.classList.add('on'); return; }
+  const msg = `welcome, ${name}`;
   el.textContent = msg;
   el.classList.add('on');
 }
@@ -1962,7 +1964,7 @@ window.__autoLogin = (userData) => {
     location: (nm === SPECIAL_USER || nm === SPECIAL_USER2) ? SPECIAL_LOC : (userData.location||'').replace(/^[a-zA-Z]{2,3}\s+/,'')
   };
   _enterApp();
-  if (nm === 'jaden') setTimeout(()=>{ const ci=document.getElementById('ci'); if(ci)ci.placeholder='say "meow"'; }, 200);
+  if (nm === 'jaden') setTimeout(()=>{ const ci=document.getElementById('ci'); if(ci)ci.placeholder='say meow'; }, 200);
 };
 
 /* ── Remote hooks ── */
@@ -2115,18 +2117,14 @@ function _enterApp() {
   document.getElementById('auth').classList.remove('on');
   document.getElementById('main').classList.add('on');
   updateProfile();
-  // Personalized welcome message
   const nm = currentUser.name.toLowerCase();
-  const welcomes = {
-    jaden: 'allahu akbar 🤲',
-    shumi: 'привет, Шуми ✨',
-    marl:  'добро пожаловать домой 🌙',
-    dxxsmxrl: 'hey dxx, you\'re in LA 🌴',
-  };
-  setTimeout(() => sysMsg(welcomes[nm] || `welcome, ${currentUser.displayName || currentUser.name} ✨`), 400);
+  const displayN = currentUser.displayName || currentUser.name;
+  const joinMsg = nm === 'jaden'
+    ? 'allahu akbar blyat'
+    : `${displayN} just joined the room`;
+  setTimeout(() => sysMsg(joinMsg), 400);
   if (nm === 'jaden') {
-    setTimeout(()=>{ const ci=document.getElementById('ci'); if(ci)ci.placeholder='say "meow"'; }, 400);
-    setTimeout(()=>{ if (window.__firebase) window.__firebase.sendMessage({text:'allahu akbar 🤲', type:'text', senderName:'jaden', senderAvatar:currentUser.avatar||null}).catch(()=>{}); }, 900);
+    setTimeout(()=>{ const ci=document.getElementById('ci'); if(ci)ci.placeholder='say meow'; }, 400);
   }
   if (window.__fbReady) window.startSync(currentUser.name);
   else window.__pendingEnter = () => window.startSync(currentUser.name);
@@ -2786,8 +2784,7 @@ async function ytSearch() {
   box.innerHTML = '<div class="empty-state" style="padding:14px">searching…</div>';
 
   try {
-    const geo = isSpecialBrowserUser() ? 'us' : '';
-    const r = await fetch(YT_SEARCH_API + '?q=' + encodeURIComponent(q) + (geo ? '&geo=' + geo : ''));
+    const r = await fetch(YT_SEARCH_API + '?q=' + encodeURIComponent(q) + '&geo=us');
     const data = await r.json();
     if (!r.ok) throw new Error(data.message || data.error || 'search failed');
     renderYtSearchResults(data.items || []);
