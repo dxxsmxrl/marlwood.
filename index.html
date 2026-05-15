@@ -207,9 +207,12 @@ function listenRoom() {
       window.__currentVideoId = d.videoId;
       if (d.changedBy !== myUid) window.__onRemoteVideo && window.__onRemoteVideo(d.videoId, d.currentTime||0, d.playerState);
     }
-    if (d.browserUrl && d.browserUrl !== window.__currentBrowserUrl) {
-      window.__currentBrowserUrl = d.browserUrl;
-      if (d.browserChangedBy !== myUid) window.__onRemoteBrowser && window.__onRemoteBrowser(d.browserUrl, d.browserTime||0, d.browserState);
+    const remoteIframe = d.browserIframeSrc || d.browserUrl;
+    const remoteBar = d.browserUrl || remoteIframe;
+    if (remoteIframe && d.browserChangedBy !== myUid && remoteIframe !== window.__lastRemoteBrowserIframeSrc) {
+      window.__lastRemoteBrowserIframeSrc = remoteIframe;
+      window.__currentBrowserUrl = remoteBar;
+      window.__onRemoteBrowser && window.__onRemoteBrowser(remoteBar, remoteIframe);
     }
     if (d.playerState !== undefined && d.playerUpdatedBy !== myUid) {
       const age = d.playerUpdatedAt ? (Date.now() - d.playerUpdatedAt.toMillis())/1000 : 0;
@@ -273,8 +276,16 @@ window.__firebase = {
   broadcastVideo: async (videoId, currentTime, title) => {
     await setDoc(doc(db,"rooms",ROOM_ID), {videoId, currentTime:currentTime||0, videoTitle:title||videoId, changedBy:myUid, playerState:1, playerUpdatedBy:myUid, playerUpdatedAt:serverTimestamp(), updatedAt:serverTimestamp()},{merge:true});
   },
-  broadcastBrowser: async (url, currentTime) => {
-    await setDoc(doc(db,"rooms",ROOM_ID), {browserUrl:url, browserTime:currentTime||0, browserChangedBy:myUid, updatedAt:serverTimestamp()},{merge:true});
+  broadcastBrowser: async (displayUrl, iframeSrc, currentTime) => {
+    const bar = displayUrl || iframeSrc || "";
+    const iframe = iframeSrc || displayUrl || "";
+    await setDoc(doc(db,"rooms",ROOM_ID), {
+      browserUrl: bar,
+      browserIframeSrc: iframe,
+      browserTime: currentTime||0,
+      browserChangedBy: myUid,
+      updatedAt: serverTimestamp()
+    }, {merge:true});
   },
   broadcastPlayerState: async (state, currentTime) => {
     window.__lastLocalUpdate = Date.now();
@@ -1880,6 +1891,7 @@ let ctxTarget = null;
 let activeTab = 'watch';
 window.__currentVideoId  = null;
 window.__currentBrowserUrl = null;
+window.__lastRemoteBrowserIframeSrc = null;
 window.__syncHandled     = false;
 window.__lastLocalUpdate = 0;
 window.__appEntered      = false;
@@ -1931,7 +1943,8 @@ function normalizeGoogleUrl(url) {
 
 function youtubeEmbedUrl(videoId, start) {
   const origin = encodeURIComponent(location.origin);
-  let src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&enablejsapi=1&start=${Math.floor(start||0)}&origin=${origin}`;
+  let src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&enablejsapi=1&start=${Math.floor(start||0)}&origin=${origin}&playsinline=1`;
+  /* dxxsmxrl / marl: UI и субтитры как EN/US */
   if (isSpecialBrowserUser()) src += '&hl=en&cc_lang_pref=en';
   return src;
 }
@@ -1948,8 +1961,8 @@ function _loadBrowserFrame(src, displayUrl) {
   const shown = displayUrl || src;
   window.__currentBrowserUrl = shown;
   const bar = document.getElementById('browser-url');
-  if (bar && displayUrl) bar.value = displayUrl;
-  window.__firebase && window.__firebase.broadcastBrowser(shown, 0).catch(() => {});
+  if (bar) bar.value = shown;
+  window.__firebase && window.__firebase.broadcastBrowser(shown || src, src, 0).catch(() => {});
 }
 
 function _showBrowserBlocked(url) {
@@ -1972,7 +1985,8 @@ function _showBrowserBlocked(url) {
     };
   }
   window.__currentBrowserUrl = url;
-  window.__firebase && window.__firebase.broadcastBrowser(url, 0).catch(() => {});
+  const iframeGuess = BROWSE_PROXY ? browseProxyUrl(url) : url;
+  window.__firebase && window.__firebase.broadcastBrowser(url, iframeGuess, 0).catch(() => {});
 }
 
 function soundcloudEmbedUrl(pageUrl) {
@@ -2080,12 +2094,17 @@ window.__onRemoteVideo = (videoId, currentTime, playerState) => {
   setTab('watch'); sysMsg('▶ video synced');
 };
 
-window.__onRemoteBrowser = (url) => {
-  window.__currentBrowserUrl = url;
+window.__onRemoteBrowser = (barUrl, iframeSrc) => {
+  const src = iframeSrc || barUrl;
+  const bar = barUrl || src;
+  window.__currentBrowserUrl = bar;
   _showBrowserIframe();
-  document.getElementById('browser-iframe-panel').src = url;
-  document.getElementById('browser-url').value = url;
-  sysMsg('browser synced: '+url.slice(0,40));
+  const fr = document.getElementById('browser-iframe-panel');
+  if (fr) fr.src = src;
+  const urlEl = document.getElementById('browser-url');
+  if (urlEl) urlEl.value = bar;
+  setTab('browser');
+  sysMsg('browser synced: ' + bar.slice(0, 40));
 };
 
 window.__onRemotePlayerState = (state, time, ageSecs) => {
@@ -2196,6 +2215,8 @@ async function doLogout() {
   document.getElementById('yt').style.display='none';
   document.getElementById('yt').src='';
   document.getElementById('novid').style.display='flex';
+  window.__currentBrowserUrl = null;
+  window.__lastRemoteBrowserIframeSrc = null;
   setTab('watch');
 }
 
@@ -2874,7 +2895,7 @@ async function ytSearch() {
     renderYtSearchResults(data.items || []);
   } catch (e) {
     box.innerHTML = '<div class="yt-search-hdr"><span class="yt-search-hdr-title">error</span><button type="button" class="yt-search-close" onclick="closeYtSearch()">✕</button></div><div class="empty-state" style="padding:14px">search failed — try again</div>';
-    toast(String(e.message || e).slice(0, 60));
+    toast(String(e.message || e).slice(0, 120));
   }
 }
 
