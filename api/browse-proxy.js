@@ -47,15 +47,12 @@ export default async function handler(req, res) {
     return;
   }
 
-  /* ?geo=us — доп. сигнал «десктоп US» (основная география = IP сервера Vercel в США/EU) */
-  const usGeo = req.query.geo === "us";
   const headers = {
     "User-Agent":
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
   };
-  if (usGeo) headers["Sec-CH-UA-Platform"] = '"Windows"';
 
   try {
     const upstream = await fetch(target, {
